@@ -6,7 +6,11 @@ const ml = require('./ml');
 const SIZE  = 19;
 const BATCH = 16;
 
-const UNDO_TRANSFORM = [0, 1, 2, 3, 5, 4, 8, 9];
+const FILTER_MIN   = 5;
+const FILTER_MAX   = 10;
+const FILTER_COEFF = 2;
+
+const UNDO_TRANSFORM = [0, 1, 2, 3, 5, 4, 8, 9, 0, 1, 2, 3, 5, 4, 8, 9];
 
 function isFriend(x) {
     return x > 0.1;
@@ -129,7 +133,7 @@ function UndoMove(board, undo) {
     }
 }
 
-function RedoMove(board, move, ko, undo) {
+function RedoMove(board, move, ko, undo, stat) {
     let captured = []; let f = true;
     _.each([1, -1, SIZE, -SIZE], function(dir) {
         let p = navigate(move, dir);
@@ -200,7 +204,8 @@ function GetFen(board, ko, move) {
 
 function ApplyMove(board, move) {
     let ko = [];
-    let b = RedoMove(board, move, ko, []);
+    const stat = analyze(board);
+    let b = RedoMove(board, move, ko, [], stat);
     return GetFen(b, ko, move);
 }
 
@@ -266,10 +271,8 @@ function transform(pos, n) {
     return pos;
 }
 
-function InitializeFromFen(board, fen) {
-    const offset = batch * SIZE * SIZE;
-    let row = 0;
-    let col = 0;
+function InitializeFromFen(board, fen, offset, batch) {
+    let row = 0; let col = 0; let ko = null;
     for (let i = 0; i < fen.length; i++) {
          let c = fen.charAt(i);
          if (c == '/') {
@@ -282,6 +285,7 @@ function InitializeFromFen(board, fen) {
              continue;
          }
          let piece = 0;
+         const pos = row * SIZE + col;
          switch (c) {
             case 'W': 
                piece = 1;
@@ -297,30 +301,103 @@ function InitializeFromFen(board, fen) {
                break;
             case 'X':
                piece = 0;
+               ko = pos;
                break;
         }
-        let offset = 0;
-        for (let ix = 0; ix < 8; ix++, offset += SIZE * SIZE) {
-            const pos = transform(row * SIZE + col, ix) + offset;
-            board[pos] = piece;
+        let o = offset;
+        for (let ix = 0; ix < 8; ix++, o += SIZE * SIZE) {
+            const p = transform(pos, ix) + o;
+            board[p] = piece;
+            if (batch == 1) break;
         }
-        for (let ix = 0; ix < 8; ix++, offset += SIZE * SIZE) {
-            const pos = transform(row * SIZE + col, ix) + offset;
-            board[pos] = -piece;
+        for (let ix = 0; ix < 8; ix++, o += SIZE * SIZE) {
+            if (batch == 1) break;
+            const p = transform(pos, ix) + o;
+            board[p] = -piece;
         }
         col++;
     }
+    return ko;
 }
 
-function checkForbidden(board) {
+function checkForbidden(board, ko) {
     let r = [];
     for (let p = 0; p < SIZE * SIZE; p++) {
         if (!isEmpty(board[p])) r.push(p);
+    }
+    if (ko !== null) {
+        r.push(ko);
+    }
+    const a = analyze(board);
+
+    return r;
+}
+
+function extractMoves(data, batch, forbidden) {
+    let r = [];
+    let o = 0;
+    for (let ix = 0; ix < batch; ix++, o += SIZE * SIZE) {
+        for (let pos = 0; pos < SIZE * SIZE; pos++) {
+            const w = data[pos + o] * data[pos + o] * data[pos + o];
+            const p = transform(pos, UNDO_TRANSFORM[ix]);
+            if (_.indexOf(forbidden, p) >= 0) continue;
+            r.push({
+                pos: p,
+                weight: (ix >= 8) ? -w : w
+            });
+        }
+    }
+    return r;
+}
+
+function filterMoves(moves, logger, mn, mx, coeff) {
+    const m = _.sortBy(moves, function(x) {
+        return -Math.abs(x.weight);
+    });
+    let sz = m.length; let ix = 0;
+    if (sz < 1) return; sz = 1;
+    while (sz < Math.min(m.length - 1, mn)) {
+        if (Math.abs(m[sz].weight) * coeff < Math.abs(m[sz - 1].weight)) break;
+        if (sz >= mx) break;
+        sz++;
+    }
+    let r = [];
+    for (let i = 0; i < sz; i++) {
+        console.log(FormatMove(m[i].pos) + ': ' + m[i].weight);
+        logger(FormatMove(m[i].pos) + ': ' + m[i].weight);
+        r.push(m[i]);
+    }
+    return r;
+}
+
+function norm(moves) {
+    if (moves.length > 0) {
+        let s = 0;
+        _.each(moves, function(m) {
+            s += m.weight;
+        });
+        _.each(moves, function(m) {
+            m.weight = m.weight / s;
+        });
+    }
+    return moves;
+}
+
+function randomChoose(moves) {
+    let r = null;
+    const sz = moves.length;
+    if (sz > 0) {
+        let ix = 0;
+        if (sz > 1) {
+            ix = _.random(0, sz - 1);
+        }
+        r = moves[ix];
     }
     return r;
 }
 
 function FormatMove(move) {
+    if (move === null) return "Pass";
     const col = move % SIZE;
     const row = (move / SIZE) | 0;
     const letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's'];
@@ -328,24 +405,40 @@ function FormatMove(move) {
 }
 
 async function FindMove(fen, callback, logger) {
-    let undo  = [];
+    const t1 = Date.now();
     let board = new Float32Array(BATCH * SIZE * SIZE);
-    InitializeFromFen(board, fen);
-    const forbidden = checkForbidden(board);
-    const moves = ml.Predict(board);
-    
-
+    const ko = InitializeFromFen(board, fen, 0, BATCH);
+    const forbidden = checkForbidden(board, ko);
+    const result = await ml.Predict(board);
+    const moves = filterMoves(extractMoves(result, BATCH, forbidden), logger, FILTER_MIN, FILTER_MAX, FILTER_COEFF);
+    const m = randomChoose(moves);
+    const t2 = Date.now();
+    if (m !== null) {
+        const f = ApplyMove(board, m.pos);
+        callback(m.pos, f, Math.abs(m.weight) * 1000, t2 - t1);
+    } else {
+        callback(null, f, 0, t2 - t1);
+    }
 }
 
 async function Advisor(sid, fen, coeff, callback) {
-
-}
-
-async function Fit(data, logger, SERVICE) {
-
+    const t1 = Date.now();
+    let board = new Float32Array(BATCH * SIZE * SIZE);
+    const ko = InitializeFromFen(board, fen, 0, BATCH);
+    const forbidden = checkForbidden(board, ko);
+    const result = await ml.Predict(board);
+    const moves = filterMoves(extractMoves(result, BATCH, forbidden), logger, FILTER_MIN, FILTER_MAX, coeff);
+    const t2 = Date.now();
+    const r = _.map(moves, function(m) {
+        return {
+            sid: sid,
+            move: FormatMove(m.pos),
+            weight: m.weight * 1000
+        };
+    });
+    callback(result, t2 - t1);
 }
 
 module.exports.FormatMove = FormatMove;
 module.exports.FindMove = FindMove;
 module.exports.Advisor = Advisor;
-module.exports.Fit = Fit;

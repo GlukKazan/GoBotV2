@@ -1,8 +1,10 @@
 "use strict";
 
 const tf = require('@tensorflow/tfjs');
+const wasm = require('@tensorflow/tfjs-backend-wasm');
+const {nodeFileSystemRouter} = require('@tensorflow/tfjs-node/dist/io/file_system');
 
-const URL   = 'https://games.dtco.ru/test/model.json';
+const URL = 'http://127.0.0.1:3000/model/model.json';
 const SIZE  = 19;
 const BATCH = 16;
 
@@ -14,13 +16,17 @@ let model = null;
 
 async function InitModel() {
     if (model === null) {
+        await tf.enableProdMode();
+        await tf.setBackend('wasm');
+        tf.io.registerLoadRouter(nodeFileSystemRouter);
+        tf.io.registerSaveRouter(nodeFileSystemRouter);
         model = await tf.loadLayersModel(URL);
         console.log(tf.getBackend());
     }
 }
 
 async function SaveModel(savePath) {
-
+    await model.save(`file:///tmp/${savePath}`);
 }
 
 async function Predict(board) {

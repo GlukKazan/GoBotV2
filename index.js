@@ -13,8 +13,7 @@ const STATE = {
     STOP: 5,
     RECO: 6,
     GETM: 7,
-    RQST: 8,
-    LERN: 9
+    RQST: 8
 };
 
 const SERVICE  = 'https://games.dtco.ru';
@@ -122,38 +121,6 @@ let getConfirmed = function(app) {
     return true;
 }
 
-let learn = function(app) {
-    //  console.log('LERN');    
-    app.state = STATE.WAIT;
-    axios.delete(SERVICE + '/api/ai/fit/2/12800', {
-        headers: { Authorization: `Bearer ${TOKEN}` }
-    })
-    .then(function (response) {
-        if (response.data.length > 0) {
-            let data = [];
-            _.each(response.data, function(d) {
-                const result = d.setup.match(/[?&]setup=(.*)/);
-                if (result && (d.move < 19 * 19)) {
-                    data.push({
-                        fen: result[1],
-                        pos: d.move
-                    });
-                }
-            });
-            if (data.length > 0) {
-                ml.Fit(data, logger, SERVICE);
-            }
-        } 
-        app.state = STATE.RQST;
-    })
-    .catch(function (error) {
-        console.log('RQST ERROR: ' + error);
-        logger.error('RQST ERROR: ' + error);
-        app.state  = STATE.INIT;
-    });
-    return true;
-}
-
 function AdvisorCallback(moves, time) {
     _.each(moves, function(m) {
         console.log('move = ' + m.move + ', value=' + m.weight + ', time = ' + time);
@@ -219,7 +186,7 @@ let checkTurn = function(app) {
             setup = response.data[0].last_setup;
             app.state = STATE.RECO;
         } else {
-            app.state = STATE.LERN;
+            app.state = STATE.RQST;
         }
     })
     .catch(function (error) {
@@ -310,7 +277,6 @@ app.states[STATE.MOVE] = sendMove;
 app.states[STATE.RECO] = recovery;
 app.states[STATE.GETM] = getConfirmed;
 app.states[STATE.RQST] = request;
-app.states[STATE.LERN] = learn;
 
 let run = function() {
     if (app.exec()) {
