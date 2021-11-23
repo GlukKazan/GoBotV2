@@ -14,7 +14,13 @@ const VALID_SPLIT = 0.1;
 
 let model = null;
 
-async function InitModel() {
+let timestamp = null;
+let kpiTime = 0;
+let kpiCount = 0;
+let kpiMin = null;
+let kpiMax = null;
+
+async function initModel() {
     if (model === null) {
         await tf.enableProdMode();
         await tf.setBackend('wasm');
@@ -29,26 +35,46 @@ async function SaveModel(savePath) {
     await model.save(`file:///tmp/${savePath}`);
 }
 
-async function Predict(board) {
+function kpiStart() {
+    timestamp = Date.now(); 
+}
+
+function kpiStop(batch) {
+    if (timestamp !== null) {
+        const t = (Date.now() - timestamp) / batch;
+        kpiTime += t;
+        kpiCount++;
+        if ((kpiMin === null) || (kpiMin > t)) kpiMin = t;
+        if ((kpiMax === null) || (kpiMax < t)) kpiMax = t;
+        timestamp = null;
+        if ((kpiCount % 100) == 0) {
+            console.log('Predict time: ' + kpiMin + ', ' + (kpiTime / kpiCount) + ', ' + kpiMax);
+            kpiMin = null;
+            kpiMax = null;
+        }
+    }
+}
+
+async function predict(board) {
     const t0 = Date.now();
-    await InitModel();
+    await initModel();
     const t1 = Date.now();
     console.log('Load time: ' + (t1 - t0));
     const shape = [BATCH, 1, SIZE, SIZE];
     const d = tf.tensor4d(board, shape, 'float32');
+    kpiStart();
     const p = await model.predict(d);
+    kpiStop(BATCH);
     const r = await p.data();
-    const t2 = Date.now();
-    console.log('Predict time: ' + (t2 - t1));
     d.dispose();
     p.dispose();
     return r;
 }
 
 
-async function Fit(board, moves, batch) {
+async function fit(board, moves, batch) {
     const t0 = Date.now();
-    await InitModel();
+    await initModel();
     const t1 = Date.now();
     console.log('Load time: ' + (t1 - t0));
     const xshape = [batch, 1, SIZE, SIZE];
@@ -69,6 +95,6 @@ async function Fit(board, moves, batch) {
     return h;
 }
 
-module.exports.SaveModel = SaveModel;
-module.exports.Predict = Predict;
-module.exports.Fit = Fit;
+module.exports.saveModel = saveModel;
+module.exports.predict = predict;
+module.exports.fit = fit;

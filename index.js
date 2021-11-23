@@ -121,7 +121,7 @@ let getConfirmed = function(app) {
     return true;
 }
 
-function AdvisorCallback(moves, time) {
+function advisorCallback(moves, time) {
     _.each(moves, function(m) {
         console.log('move = ' + m.move + ', value=' + m.weight + ', time = ' + time);
         logger.info('move = ' + m.move + ', value=' + m.weight + ', time = ' + time);
@@ -157,7 +157,7 @@ let request = function(app) {
                 let fen = result[1];
                 console.log('[' + sid + '] fen = ' + fen + ', coeff = ' + coeff);
                 logger.info('[' + sid + '] fen = ' + fen);
-                ml.Advisor(sid, fen, coeff, AdvisorCallback);
+                go.advisor(sid, fen, coeff, advisorCallback);
             } else {
                 app.state = STATE.TURN;
             }
@@ -207,7 +207,7 @@ function getSetup(fen) {
     return r;
 }
 
-function FinishTurnCallback(bestMove, fen, value, time) {
+function finishTurnCallback(bestMove, fen, value, time) {
     let move = ai.FormatMove(bestMove);
     const result = setup.match(/[?&]turn=(\d+)/);
     if (result) {
@@ -247,7 +247,7 @@ let sendMove = function(app) {
         let fen = result[1];
         console.log('[' + sid + '] fen = ' + fen);
         logger.info('[' + sid + '] fen = ' + fen);
-        ai.FindMove(fen, FinishTurnCallback, LoggerInfo);
+        go.findMove(fen, finishTurnCallback, LoggerInfo);
     } else {
         app.state  = STATE.STOP;
     }
