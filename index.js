@@ -1,7 +1,6 @@
 "use strict";
 
 const ai = require('./go');
-const ml = require('./ml');
 const axios = require('axios');
 const _ = require('underscore');
 
@@ -157,7 +156,7 @@ let request = function(app) {
                 let fen = result[1];
                 console.log('[' + sid + '] fen = ' + fen + ', coeff = ' + coeff);
                 logger.info('[' + sid + '] fen = ' + fen);
-                go.advisor(sid, fen, coeff, advisorCallback);
+                ai.advisor(sid, fen, coeff, advisorCallback);
             } else {
                 app.state = STATE.TURN;
             }
@@ -208,7 +207,7 @@ function getSetup(fen) {
 }
 
 function finishTurnCallback(bestMove, fen, value, time) {
-    let move = ai.FormatMove(bestMove);
+    let move = ai.formatMove(bestMove);
     const result = setup.match(/[?&]turn=(\d+)/);
     if (result) {
         turn = result[1];
@@ -247,7 +246,7 @@ let sendMove = function(app) {
         let fen = result[1];
         console.log('[' + sid + '] fen = ' + fen);
         logger.info('[' + sid + '] fen = ' + fen);
-        go.findMove(fen, finishTurnCallback, LoggerInfo);
+        ai.findMove(fen, finishTurnCallback, LoggerInfo);
     } else {
         app.state  = STATE.STOP;
     }

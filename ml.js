@@ -31,7 +31,7 @@ async function initModel() {
     }
 }
 
-async function SaveModel(savePath) {
+async function saveModel(savePath) {
     await model.save(`file:///tmp/${savePath}`);
 }
 

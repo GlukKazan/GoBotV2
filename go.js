@@ -150,6 +150,21 @@ function isDead(board, stat, pos, player) {
     return dame < 3;
 }
 
+function checkForbidden(board, ko, player) {
+    let r = [];
+    for (let p = 0; p < SIZE * SIZE; p++) {
+        if (!isEmpty(board[p], player)) r.push(p);
+    }
+    if (ko !== null) {
+        r.push(ko);
+    }
+    const a = analyze(board, player);
+    // TODO: atari
+    // TODO: eyes
+
+    return r;
+}
+
 function getHints(board, player, stat) {
     let r = []; 
     // capture
@@ -178,8 +193,8 @@ function getHints(board, player, stat) {
     return r;
 }
 
-function undoMoves(board, undo) {
-    if (undo.length > 0) {
+function undoMoves(board, undo, sz) {
+    while (undo.length > sz) {
         const u = undo.pop();
         board[u.pos] = u.data;
     }
@@ -372,21 +387,6 @@ function initializeFromFen(board, fen, offset, batch) {
     return ko;
 }
 
-function checkForbidden(board, ko, player) {
-    let r = [];
-    for (let p = 0; p < SIZE * SIZE; p++) {
-        if (!isEmpty(board[p], player)) r.push(p);
-    }
-    if (ko !== null) {
-        r.push(ko);
-    }
-    const a = analyze(board, player);
-    // TODO: atari
-    // TODO: eyes
-
-    return r;
-}
-
 function extractMoves(data, batch, forbidden, hints) {
     let r = [];
     let o = 0;
@@ -411,7 +411,7 @@ function filterMoves(moves, logger, mn, mx, coeff) {
     const m = _.sortBy(moves, function(x) {
         return -Math.abs(x.weight);
     });
-    let sz = m.length; let ix = 0;
+    let sz = m.length;
     if (sz < 1) return; sz = 1;
     while (sz < Math.min(m.length - 1, mn)) {
         if (Math.abs(m[sz].weight) * coeff < Math.abs(m[sz - 1].weight)) break;
@@ -485,7 +485,7 @@ async function simulate(board, move, undo) {
         let ko = [];
         const stat = analyze(board, 1);
         redoMove(board, move, ko, undo, stat, player);
-        const result = await ml.Predict(board);
+        const result = await ml.predict(board);
         const forbidden = checkForbidden(board, ko);
         const moves = filterMoves(extractMoves(result, BATCH, forbidden, getHints(board, player, stat)), logger, FILTER_MIN, FILTER_MAX, FILTER_COEFF);
         if (moves.length == 0) return;
@@ -513,6 +513,7 @@ async function mctsChoose(board, moves) {
     let cnt = 0;
     for (let i = 0; i < MCTS_COUNT; i++) {
         const node = uctChoose(nodes, cnt);
+        const sz = undo.length;
         await simulate(board, node, undo);
         const adv = estimate(board, 1);
         if (adv > 0) {
@@ -520,7 +521,7 @@ async function mctsChoose(board, moves) {
         }
         node.cnt++;
         cnt++;
-        undoMoves(board, undo);
+        undoMoves(board, undo, sz);
     }
     return _.max(nodes, function(x) {
         return x.cnt;
@@ -531,7 +532,7 @@ async function findMove(fen, callback, logger) {
     const t1 = Date.now();
     let board = new Float32Array(BATCH * SIZE * SIZE);
     const ko = initializeFromFen(board, fen, 0, BATCH);
-    const result = await ml.Predict(board);
+    const result = await ml.predict(board);
     const stat = analyze(board, 1);
     const forbidden = checkForbidden(board, ko);
     const moves = filterMoves(extractMoves(result, BATCH, forbidden, getHints(board, player, stat)), logger, FILTER_MIN, FILTER_MAX, FILTER_COEFF);
@@ -553,7 +554,7 @@ async function advisor(sid, fen, coeff, callback) {
     let board = new Float32Array(BATCH * SIZE * SIZE);
     const ko = initializeFromFen(board, fen, 0, BATCH);
     const forbidden = checkForbidden(board, ko);
-    const result = await ml.Predict(board);
+    const result = await ml.predict(board);
     const moves = filterMoves(extractMoves(result, BATCH, forbidden, []), logger, FILTER_MIN, FILTER_MAX, coeff);
     const t2 = Date.now();
     const r = _.map(moves, function(m) {
