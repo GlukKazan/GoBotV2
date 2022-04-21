@@ -1,8 +1,9 @@
 "use strict";
 
-const ai = require('./go');
-const axios = require('axios');
 const _ = require('underscore');
+const axios = require('axios');
+const ai = require('./ai');
+const go = require('./go');
 
 const STATE = {
     INIT: 1,
@@ -156,7 +157,7 @@ let request = function(app) {
                 let fen = result[1];
                 console.log('[' + sid + '] fen = ' + fen + ', coeff = ' + coeff);
                 logger.info('[' + sid + '] fen = ' + fen);
-                ai.advisor(sid, fen, coeff, advisorCallback);
+                ai.advisor(sid, fen, coeff, advisorCallback, LoggerInfo);
             } else {
                 app.state = STATE.TURN;
             }
@@ -207,7 +208,7 @@ function getSetup(fen) {
 }
 
 function finishTurnCallback(bestMove, fen, value, time) {
-    let move = ai.formatMove(bestMove);
+    let move = go.formatMove(bestMove);
     const result = setup.match(/[?&]turn=(\d+)/);
     if (result) {
         turn = result[1];

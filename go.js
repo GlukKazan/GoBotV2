@@ -11,7 +11,6 @@ const FILTER_MAX   = 10;
 const FILTER_COEFF = 2;
 
 const MCTS_COUNT   = 1000;
-const UCT_COEFF    = 1.41;
 
 const UNDO_TRANSFORM = [0, 1, 2, 3, 5, 4, 8, 9, 0, 1, 2, 3, 5, 4, 8, 9];
 
@@ -193,13 +192,6 @@ function getHints(board, player, stat) {
     return r;
 }
 
-function undoMoves(board, undo, sz) {
-    while (undo.length > sz) {
-        const u = undo.pop();
-        board[u.pos] = u.data;
-    }
-}
-
 function redoMove(board, move, ko, undo, stat, player) {
     let captured = []; let f = true;
     _.each([1, -1, SIZE, -SIZE], function(dir) {
@@ -338,7 +330,7 @@ function transform(pos, n) {
     return pos;
 }
 
-function initializeFromFen(board, fen, offset, batch) {
+function initializeFromFen(board, fen, batch) {
     let row = 0; let col = 0; let ko = null;
     for (let i = 0; i < fen.length; i++) {
          let c = fen.charAt(i);
@@ -371,7 +363,7 @@ function initializeFromFen(board, fen, offset, batch) {
                ko = pos;
                break;
         }
-        let o = offset;
+        let o = 0;
         for (let ix = 0; ix < 8; ix++, o += SIZE * SIZE) {
             const p = transform(pos, ix) + o;
             board[p] = piece;
@@ -401,9 +393,11 @@ function extractMoves(data, batch, forbidden, hints) {
             });
         }
     }
-    _.each(hints, function(m) {
-        r.push(m);
-    });
+    if (_.isUndefined(hints)) {
+        _.each(hints, function(m) {
+            r.push(m);
+        });
+    }
     return r;
 }
 
@@ -427,44 +421,6 @@ function filterMoves(moves, logger, mn, mx, coeff) {
     return r;
 }
 
-function randomChoose(moves) {
-    let r = null;
-    const sz = moves.length;
-    if (sz > 0) {
-        let ix = 0;
-        if (sz > 1) {
-            ix = _.random(0, sz - 1);
-        }
-        r = moves[ix];
-    }
-    return r;
-}
-
-function norm(moves) {
-    if (moves.length > 0) {
-        let s = 0;
-        _.each(moves, function(m) {
-            s += m.weight;
-        });
-        _.each(moves, function(m) {
-            m.weight = m.weight / s;
-        });
-    }
-    return moves;
-}
-
-function weighedChoose(moves) {
-    let ix = -1; let sm = 0;
-    const lm = _.random(0, 999);
-    for (let i = 0; i < moves.length; i++) {
-        ix++;
-        sm += moves[i].weight * 1000;
-        if (sm >= lm) break;
-    }
-    if (ix < 0) return null;
-    return moves[ix];
-}
-
 function formatMove(move) {
     if (move === null) return "Pass";
     const col = move % SIZE;
@@ -473,100 +429,10 @@ function formatMove(move) {
     return letters[col] + (SIZE - row);
 }
 
-function uctChoose(nodes, cnt) {
-    return _.max(nodes, function(x) {
-        return UCT_COEFF * x.win * Math.sqrt(cnt) / (1 + x.cnt) + x.weight;
-    });
-}
-
-async function simulate(board, move, undo) {
-    let player = 1;
-    while (true) {
-        let ko = [];
-        const stat = analyze(board, 1);
-        redoMove(board, move, ko, undo, stat, player);
-        const result = await ml.predict(board);
-        const forbidden = checkForbidden(board, ko);
-        const moves = filterMoves(extractMoves(result, BATCH, forbidden, getHints(board, player, stat)), logger, FILTER_MIN, FILTER_MAX, FILTER_COEFF);
-        if (moves.length == 0) return;
-        move = weighedChoose(moves);
-        player = (player > 0) ? -1 : 1;
-    }
-}
-
-function estimate(board, player) {
-    // TODO: remove dead groups (use undo)
-    // TODO: captured + territory
-
-}
-
-async function mctsChoose(board, moves) {
-    let undo = [];
-    let nodes = _.map(norm(moves), function(move) {
-        return {
-            pos: move.pos,
-            weight: move.weight,
-            cnt: 0,
-            win: 0
-        };
-    });
-    let cnt = 0;
-    for (let i = 0; i < MCTS_COUNT; i++) {
-        const node = uctChoose(nodes, cnt);
-        const sz = undo.length;
-        await simulate(board, node, undo);
-        const adv = estimate(board, 1);
-        if (adv > 0) {
-            node.win++;
-        }
-        node.cnt++;
-        cnt++;
-        undoMoves(board, undo, sz);
-    }
-    return _.max(nodes, function(x) {
-        return x.cnt;
-    });
-}
-
-async function findMove(fen, callback, logger) {
-    const t1 = Date.now();
-    let board = new Float32Array(BATCH * SIZE * SIZE);
-    const ko = initializeFromFen(board, fen, 0, BATCH);
-    const result = await ml.predict(board);
-    const stat = analyze(board, 1);
-    const forbidden = checkForbidden(board, ko);
-    const moves = filterMoves(extractMoves(result, BATCH, forbidden, getHints(board, player, stat)), logger, FILTER_MIN, FILTER_MAX, FILTER_COEFF);
-    let m = null;
-    if (moves.length > 0) {
-        m = randomChoose(moves);
-    }
-    const t2 = Date.now();
-    if (m !== null) {
-        const f = applyMove(board, m.pos);
-        callback(m.pos, f, Math.abs(m.weight) * 1000, t2 - t1);
-    } else {
-        callback(null, f, 0, t2 - t1);
-    }
-}
-
-async function advisor(sid, fen, coeff, callback) {
-    const t1 = Date.now();
-    let board = new Float32Array(BATCH * SIZE * SIZE);
-    const ko = initializeFromFen(board, fen, 0, BATCH);
-    const forbidden = checkForbidden(board, ko);
-    const result = await ml.predict(board);
-    const moves = filterMoves(extractMoves(result, BATCH, forbidden, []), logger, FILTER_MIN, FILTER_MAX, coeff);
-    const t2 = Date.now();
-    const r = _.map(moves, function(m) {
-        return {
-            sid: sid,
-            move: formatMove(m.pos),
-            weight: m.weight * 1000
-        };
-    });
-    callback(result, t2 - t1);
-}
-
+module.exports.initializeFromFen = initializeFromFen;
+module.exports.checkForbidden = checkForbidden;
+module.exports.extractMoves = extractMoves;
+module.exports.filterMoves = filterMoves;
+module.exports.analyze = analyze;
+module.exports.applyMove = applyMove;
 module.exports.formatMove = formatMove;
-module.exports.findMove = findMove;
-module.exports.advisor = advisor;
